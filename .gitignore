@@ -1,0 +1,6 @@
+*.flightpath.json
+build/
+fixtures/
+fiddle_with_background_color.py
+__pycache__/
+*.png
