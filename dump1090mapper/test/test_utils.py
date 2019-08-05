@@ -23,21 +23,31 @@ class TestUtilsMethods(unittest.TestCase):
 
 
     def test_group_rows_between_gaps(self):
-        with open( join(dirname(abspath(__file__)),    "trajectory_points.python"), 'r') as f:
-            rows = eval(f.read())
-        grouped_rows = utils.group_rows_between_gaps(rows)
-        for group in grouped_rows:
-            self.assertGreaterEqual(len(group), 2)
-            for (a, b) in zip(group[:-1], group[1:]):
-                self.assertGreaterEqual(a["datetz"], b["datetz"])
+        for fn in ["trajectory_points.python", "trajectory_points2.python", "trajectory_points3.python"]:
+            with open( join(dirname(abspath(__file__)),    fn), 'r') as f:
+                rows = eval(f.read())
+            grouped_rows = utils.group_rows_between_gaps(rows)
+            for group in grouped_rows:
+                self.assertGreaterEqual(len(group), 2)
+                for (a, b) in zip(group[:-1], group[1:]):
+                    self.assertGreaterEqual(a.get("corrected_time",a["datetz"]) , b.get("corrected_time", b["datetz"]) )
 
-        for (a,b) in zip(grouped_rows[:-1], grouped_rows[1:]):
-            self.assertGreaterEqual(a[0]["datetz"], b[0]["datetz"])
+            for (a,b) in zip(grouped_rows[:-1], grouped_rows[1:]):
+                self.assertGreaterEqual(a[0].get("corrected_time", a[0]["datetz"]) , b[0].get("corrected_time", b[0]["datetz"]) )
 
-        for group in grouped_rows[1:]:
-            self.assertGreaterEqual(b[0]["timediff"], MAX_UNMARKED_INTERPOLATION_SECS)
+            for group in grouped_rows[1:]:
+                self.assertGreaterEqual(b[0]["timediff"], utils.MAX_UNMARKED_INTERPOLATION_SECS)
 
-
+    def test_bearing(self):
+        # white house                  38.8996473,-77.0346165
+        # scott circle, DC (due north) 38.9078277,-77.0346165
+        # bearing is zero
+        self.assertAlmostEqual(utils.bearing(-77.0346165,38.8996473 , -77.0346165, 38.9078277), 0.0, delta=1) # north
+        self.assertAlmostEqual(utils.bearing(-77.0346165,38.9078277, -77.0346165, 38.8996473), 180.0, delta=1) # south
+        # lincoln memorial: 38.8893709,-77.0503125
+        # capitol:          38.8897441,-77.0093534,19.34z
+        self.assertAlmostEqual(utils.bearing(-77.0503,38.889, -77.0093, 38.889), 90.0, delta=1) # east
+        self.assertAlmostEqual(utils.bearing(-77.0093,38.889, -77.0503, 38.889), -90.0, delta=1) # west
 
 if __name__ == '__main__':
     unittest.main()

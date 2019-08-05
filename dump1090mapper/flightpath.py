@@ -24,21 +24,19 @@ from .utils import *
 
 # IMAGE:
 # TODO: trim edges to get rid of bled-over text
-# TODO: state borders
-# TODO: fiddle with text offsets
+# TODO: state borders (ehh,  maybe not?)
+# TODO: fiddle with text offsets/backgrounds
 # TODO: factor out the plt.plot() stuff for the various lines that make up the plane
-# TODO: blue bg for water
 # TODO: double check the arrowheads being positioned right 
+
 # DATA LOADING
 # TODO: undo the reversing of records so much (i.e. in geojson and in plane-line plotting, sort_rows_by_corrected_time)
 #       assert rows sort-order in the appropriate places
 # TODO: ensure rows by corrected time (sort_rows_by_corrected_time) works
 # TODO: from_json, FlightpathShingle.__init__() should actually call the parent init (DRY that out)
 # TODO: should cache neighborhood names
-# TODO: to_json() shouldn't write JSON, just return it for writing by the caller.
 # TODO: getting points from sql should have a time limit of like a week or a month
-# TESTS
-# TODO: sort_rows_by_corrected_time
+# TODO: run nypdcopterbot.rb with a saved JSON to test arrows, etc.
 
 MIN_POINTS = 5
 # TODO: MAX_MINUTES_BETWEEN_TRAJECTORIES = args.MAXTIMEDIFF or 10 # minutes
@@ -139,7 +137,7 @@ class Flightpath():
 
         trajectory_points = flightpath_json["trajectory_points"]
         for point in trajectory_points:
-            point["datetz"] = datetime.fromisoformat(point["datetz"])
+            point["corrected_time"] = datetime.fromisoformat(point["corrected_time"])
         fp.trajectory_points = trajectory_points
         if fp.crs != DEFAULT_CRS:
             fp.plane_gdf = fp.plane_gdf.to_crs(epsg=fp.crs)
@@ -161,22 +159,22 @@ class Flightpath():
         neighborhood_names = self.neighborhoods_counter.neighborhoods_under_points(trajectory_points_gdf)
         return neighborhood_names
 
+    def json_fn(self):
+        start_time_str = self.start_time.isoformat().replace(":", "_")
+        end_time_str = self.end_time.isoformat().replace(":", "_")
+        return f"{self.nnum or self.icao_hex}-{start_time_str}-{end_time_str}.flightpath.json"
 
-    def to_json(self, fn=None, fh=None):
+
+    def to_json(self):
         """saves a JSON file suitable to be re-loaded with from_json"""
         if self.plane_gdf is None:
             self._get_points_from_sql()
-        start_time_str = self.start_time.isoformat().replace(":", "_")
-        end_time_str = self.end_time.isoformat().replace(":", "_")
-        fn = fn or f"{self.nnum or self.icao_hex}-{start_time_str}-{end_time_str}.flightpath.json"
         trajectory_points = []
         for point in self.trajectory_points: # make a copy of trajectory_points with datetz objects that are serializable
             point = dict(point)
-            point["datetz"] = point["datetz"].isoformat()
+            point["corrected_time"] = point["corrected_time"].isoformat()
             trajectory_points.append(point)
-        if not fh:
-            fh = open(fn, 'w')
-        fh.write(json.dumps({
+        return json.dumps({
             "geojson": self.plane_geojson,
             "icao_hex": self.icao_hex,
             "nnum": self.nnum,
@@ -186,8 +184,7 @@ class Flightpath():
             "trajectory_points": trajectory_points
         }, sort_keys=True,
            indent=4, 
-           separators=(',', ': ')))
-        fh.close()
+           separators=(',', ': '))
 
     def _get_points_from_sql(self):
         self._connect_to_mysql()
@@ -227,9 +224,13 @@ class Flightpath():
         else:
             trajectory_points = sort_rows_by_corrected_time(rows)
 
+        for row1, row2 in zip(trajectory_points[:-1], trajectory_points[1:]):
+            row2["timediff"] = abs((row1["datetz"] - row2["datetz"]).total_seconds())
 
+        # sorted with the most recent point last.
+        assert trajectory_points[0]["corrected_time"] <= trajectory_points[1]["corrected_time"] and trajectory_points[0]["corrected_time"] <= trajectory_points[-1]["corrected_time"]
 
-        self.trajectory_points = [{"datetz": row["datetz"], "timediff": row.get("timediff", 0), "lat": row["lat"], "lon": row["lon"]} for row in trajectory_points]
+        self.trajectory_points = [{"corrected_time": row["corrected_time"], "timediff": row.get("timediff", 0), "lat": row["lat"], "lon": row["lon"]} for row in trajectory_points]
         trajectory_points_grouped = group_rows_between_gaps(self.trajectory_points)
         for group in trajectory_points_grouped:
             assert(len(group) >= 2)
@@ -241,8 +242,8 @@ class Flightpath():
             plane = plane.to_crs(epsg=self.crs)
         self.plane_gdf = plane
         self.plane_geojson = plane_geojson
-        self.start_time = self.trajectory_points[-1]["datetz"]
-        self.end_time =   self.trajectory_points[0]["datetz"]
+        self.start_time = self.trajectory_points[0]["corrected_time"]
+        self.end_time =   self.trajectory_points[-1]["corrected_time"]
 
     def as_shingles(self):
         """returns a list of other Flightpaths"""
@@ -250,27 +251,24 @@ class Flightpath():
             self._get_points_from_sql()
         # plane_points = [item for sublist in [list(n.coords) for n in list(self.plane_gdf["geometry"])] for item in sublist]
 
-        if len(self.trajectory_points) == 0 or (self.trajectory_points[0]['datetz'] - self.trajectory_points[-1]['datetz']).total_seconds() < SHINGLE_DURATION_SECS:
-            raise HelicopterShinglingError("trajectory duration is too short to generate shingles" )
-
-        traj_duration_secs = abs((self.trajectory_points[0]['datetz'] - self.trajectory_points[-1]['datetz']).total_seconds()) 
+        traj_duration_secs = abs((self.trajectory_points[-1]['corrected_time'] - self.trajectory_points[0]['corrected_time']).total_seconds()) 
         shingles_cnt = int((traj_duration_secs / (SHINGLE_DURATION_SECS)) * 2) # how many shingles to generate
         print(f"shingles count: {shingles_cnt} over {int(traj_duration_secs/60)} min")
         for i in range(shingles_cnt):
             shingle_start_elapsed_time = ((SHINGLE_DURATION_SECS/2.0) * i)
             shingle_end_elapsed_time  = ((SHINGLE_DURATION_SECS/2.0) * (i + 2))
-
-            shingle_start_time = self.trajectory_points[-1]['datetz'] + timedelta(seconds=shingle_start_elapsed_time) # self.trajectory_points[-1] is the one that happened first.
-            shingle_end_time = self.trajectory_points[-1]['datetz'] + timedelta(seconds=shingle_end_elapsed_time) # self.trajectory_points[-1] is the one that happened first.
-            shingle_points = [pt for pt in self.trajectory_points if pt['datetz'] >= shingle_start_time and pt['datetz'] <= shingle_end_time]
+            print(shingle_start_elapsed_time)
+            shingle_start_time = self.trajectory_points[0]['corrected_time'] + timedelta(seconds=shingle_start_elapsed_time) # self.trajectory_points[-1] is the one that happened first.
+            shingle_end_time = self.trajectory_points[0]['corrected_time'] + timedelta(seconds=shingle_end_elapsed_time) # self.trajectory_points[-1] is the one that happened first.
+            shingle_points = [pt for pt in self.trajectory_points if pt['corrected_time'] >= shingle_start_time and pt['corrected_time'] <= shingle_end_time]
             print(f"Shingle has {len(shingle_points)} points")
 
-            if len(shingle_points) >= MAP_MIN_POINTS and (shingle_points[0]['datetz'] - shingle_points[1]['datetz']).total_seconds() >= SHINGLE_MIN_DURATION:
+            if len(shingle_points) >= MAP_MIN_POINTS and (shingle_points[-1]['corrected_time'] - shingle_points[0]['corrected_time']).total_seconds() >= SHINGLE_MIN_DURATION:
                 print(shingle_start_time, shingle_end_time)
                 yield FlightpathShingle(self, shingle_points)
 
 
-    def to_map(self, fn=None, arbitrary_marker=None, include_background=True):
+    def to_map(self, fn=None, arbitrary_marker=None, include_background=True, background_color=None):
         if self.plane_gdf is None:
             self._get_points_from_sql()
 
@@ -279,7 +277,12 @@ class Flightpath():
             return 
         fig = plt.figure(frameon=False)
         ax = plt.axes()
-        ax.set_axis_off()
+        ax.axes.get_xaxis().set_visible(False)
+        ax.axes.get_yaxis().set_visible(False)
+
+        if background_color:
+            ax.set_facecolor(background_color)
+
 
         ## figuring out the right bounds for the map, which we want to be a square.
         # The latitude is 40.730610, and the longitude is -73.935242
@@ -349,9 +352,8 @@ class Flightpath():
         ### drawing the plane
         # with pointy arrows at the end
         if self.plane_gdf["geometry"].shape[0] == 1: 
-            #  if there's only one line, just draw
+            #  if there's only one line, just draw it (but break it up into two pieces so we can put arrows on the ends.)
             plane_only_line_xy = self.plane_gdf["geometry"][0].xy
-            [coords.reverse() for coords in plane_only_line_xy] # coords are by default most-recent-first, for some reason, so we reverse it to make it most-recent-last
             plane_first_line_xy = (plane_only_line_xy[0][:2], plane_only_line_xy[1][:2])
             plane_last_line_xy = (plane_only_line_xy[0][1:], plane_only_line_xy[1][1:])
             plane_last_line_props = plane_first_line_props = self.plane_geojson["features"][0]
@@ -362,27 +364,58 @@ class Flightpath():
             plane_last_line_xy = plane_last_line.xy
             plane_first_line_props = self.plane_geojson["features"][0]
             plane_last_line_props  = self.plane_geojson["features"][-1]
-            [coords.reverse() for coords in plane_last_line_xy] # coords are by default most-recent-first, for some reason, so we reverse it to make it most-recent-last
 
         if self.plane_gdf["geometry"].shape[0] >= 3:
             for line, props in zip(self.plane_gdf["geometry"][1:-1], self.plane_geojson["features"][1:-1]):
                 line_xy = line.xy
-                [coords.reverse() for coords in line_xy] # coords are by default most-recent-first, for some reason, so we reverse it to make it most-recent-last
                 plt.plot(*line_xy, color='red', linewidth=2, linestyle=":" if props["properties"]["interpolated"] else "-")
 
-        startmarker = mpl.path.Path([[-2.5,4],[0,-4],[2.5,4]],[1,2,2])
-        rotation = bearing(plane_first_line_xy[0][0], plane_first_line_xy[1][0], plane_first_line_xy[0][1], plane_first_line_xy[1][1])
-        startmarker = startmarker.transformed(mpl.transforms.Affine2D().rotate_deg(180 - rotation))
+        print("first line", plane_first_line_xy)
+        start_marker = mpl.path.Path([[-2.5,4],[0,-4],[2.5,4]],[1,2,2])
+        
+        
+        start_rotation = bearing(
+            *transform(Proj(init=f"EPSG:{self.crs}") , Proj(init='EPSG:4326'), plane_first_line_xy[0][0], plane_first_line_xy[1][0]),
+            *transform(Proj(init=f"EPSG:{self.crs}") , Proj(init='EPSG:4326'), plane_first_line_xy[0][1], plane_first_line_xy[1][1]))
+        # marker at rotation zero points downwards; 90 points east, 180 points up; -90, 270 points west
+        # which is weird, since it's counterclockwise
+        # compass_bearings returned by bearings are clockwise. 0: north; 180: south; 90: east; -90: west. 
+        # so we have to multiply by -1 to reflect across the vertical axis
+        # and add 180 to reflect across the horizontal axis.
+        # phew!
+        start_marker = start_marker.transformed(mpl.transforms.Affine2D().rotate_deg(180 + (-1 * start_rotation)))
+        print("start_marker", start_rotation)
         plt.plot(*plane_first_line_xy, color='red', linewidth=2, 
-            marker=startmarker, markeredgecolor='red', markerfacecolor='red', markersize=10, markevery=[0],
+            marker=start_marker, markeredgecolor='red', markerfacecolor='red', markersize=10, markevery=[0],
             linestyle=":" if plane_first_line_props["properties"]["interpolated"] else "-"
             )
 
-        endmarker = mpl.path.Path([[-2.5,4],[0,-4],[2.5,4]],[1,2,2])
-        rotation = bearing(plane_last_line_xy[0][0], plane_last_line_xy[1][0], plane_last_line_xy[0][1], plane_last_line_xy[1][1])
-        endmarker = endmarker.transformed(mpl.transforms.Affine2D().rotate_deg(270 - rotation))
+        # TODO erase this crap.
+        # TODO: to get the arrows positioned right
+        # (a) verify that the sort order is correct with an assertion
+        # (b) check the first/last points on the map with https://epsg.io/transform#s_srs=2263&t_srs=4326&x=1008085.5476291947&y=188163.5085292824
+        # first line (array('d', [1008085.5476291947, 1008321.5125119365, 1013809.5113116304]), array('d', [188163.5085292824, 187945.14369742604, 174944.67593990226]))
+        #                                                               40°40'59.196",-73°54'50.616"
+        #                                                               Bushwick (near Chauncey J)
+        # last line (array('d', [972081.46942511, 969538.8233419291, 969455.6974232981, 969015.899166967, 972815.8461703423, 991687.3662600536]), array('d', [180340.01645021865, 187369.31956139568, 187504.17174576147, 189420.81446445087, 190344.12501779612, 237239.45081197194]))
+        #                                                               https://epsg.io/transform#s_srs=2263&t_srs=4326&x=1013809.5113116304&y=174944.67593990226
+        #                                                               40°38'48.516",-73°53'36.528"
+        #                                                               Canarsie near the pier and the end of hte L, but closer to Fresh Creek
+        # (c) futz with rotations.
+        
+        # start_marker  -22.737663038347076 and we want it to be facing NNW (so like maybe -25?)
+        # end_marker 160.15010548121617 and we want it to be facing SSE (so like 154)
+
+
+        print("last line", plane_last_line_xy)
+        end_marker = mpl.path.Path([[-2.5,4],[0,-4],[2.5,4]],[1,2,2])
+        end_rotation = bearing(
+            *transform(Proj(init=f"EPSG:{self.crs}") , Proj(init='EPSG:4326'), plane_last_line_xy[0][-2], plane_last_line_xy[1][-2]),
+            *transform(Proj(init=f"EPSG:{self.crs}") , Proj(init='EPSG:4326'), plane_last_line_xy[0][-1], plane_last_line_xy[1][-1]))
+        end_marker = end_marker.transformed(mpl.transforms.Affine2D().rotate_deg(180 +  (-1 * end_rotation)))
+        print("end_marker", end_rotation)
         plt.plot(*plane_last_line_xy, color='red', linewidth=2, 
-            marker=endmarker, markeredgecolor='red', markerfacecolor='red', markersize=10, markevery=[-1],
+            marker=end_marker, markeredgecolor='red', markerfacecolor='red', markersize=10, markevery=[-1],
             linestyle=":" if plane_last_line_props["properties"]["interpolated"] else "-"
             )
 
@@ -432,14 +465,21 @@ class Flightpath():
 
 class FlightpathShingle(Flightpath):
     def __init__(self, parent_flightpath, trajectory_points):
-        print(trajectory_points[0]["datetz"], trajectory_points[-1]["datetz"])
-        self = super().__init__(parent_flightpath.icao_hex, nnum=parent_flightpath.nnum, start_time=trajectory_points[0]["datetz"], end_time=trajectory_points[-1]["datetz"], crs=parent_flightpath.crs)
+        print(trajectory_points[0]["corrected_time"], trajectory_points[-1]["corrected_time"])
+        
+        # trajectory_points is MOST RECENT FIRST
+        assert len(trajectory_points) == 1 or trajectory_points[0]["corrected_time"] <= trajectory_points[1]["corrected_time"]
+        if len(trajectory_points) == 0 or (trajectory_points[-1]['corrected_time'] - trajectory_points[0]['corrected_time']).total_seconds() < SHINGLE_DURATION:
+            raise HelicopterShinglingError("trajectory duration is too short to generate shingles" )
+        if len(trajectory_points) < MAP_MIN_POINTS:
+            raise HelicopterShinglingError("shingle has too few points")
 
-        start_time_str = self.start_time.isoformat().replace(":", "_") # TODO factor this out in favor of a .format()
-        end_time_str = self.end_time.isoformat().replace(":", "_")
+
+        super().__init__(parent_flightpath.icao_hex, nnum=parent_flightpath.nnum, start_time=trajectory_points[0]["corrected_time"], end_time=trajectory_points[-1]["corrected_time"], crs=parent_flightpath.crs)
 
         self.is_hovering = None # this is special to FlightpathShingle
 
+        self.trajectory_points = trajectory_points
         trajectory_points_grouped = group_rows_between_gaps(trajectory_points)
         plane, plane_geojson = rows_to_geojson(trajectory_points_grouped)
         self.points_cnt = len(trajectory_points)

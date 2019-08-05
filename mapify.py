@@ -29,13 +29,15 @@ if __name__ == "__main__":
     assert icao_hex is not None
 
     flightpath = Flightpath(icao_hex, aircraft_nnum, crs=crs) #  (datetime(2019, 7, 27, 6, 8, 15), datetime(2019, 7, 27, 6, 44, 45)
-    # flightpath = Flightpath.from_json('N917PD-2019-07-27T16_46_28-2019-07-27T17_13_43.flightpath.json')
+    flightpath = Flightpath.from_json('N920PD-2019-08-04T23_38_40-2019-08-05T00_17_43.flightpath.json')
     try:
         [s for s in flightpath.as_shingles()]
     except HelicopterShinglingError:
         []
 
-    map_fn, plt = flightpath.to_map()
-    flightpath.to_json()
+    map_fn, plt = flightpath.to_map(background_color='#ADD8E6')
+    fp_json = flightpath.to_json()
+    with open(flightpath.json_fn(), 'w') as f:
+        f.write(fp_json)
 
     plt.show(block=True)

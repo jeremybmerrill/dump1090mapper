@@ -8,9 +8,7 @@ class TestFlightpathMethods(unittest.TestCase):
 
     def test_jsonification(self):
         fp = flightpath.Flightpath.from_json("N917PD-2019-07-31T09_17_45-2019-07-31T09_20_44.flightpath.json")
-        fp.to_json(fn="/tmp/flightpathtest.json")
-        with open("/tmp/flightpathtest.json") as f:
-            output = f.read()
+        output = fp.to_json()
         with open("N917PD-2019-07-31T09_17_45-2019-07-31T09_20_44.flightpath.json") as f:
             input_ = f.read()
         self.assertEqual(output, input_)

@@ -61,13 +61,13 @@ def _hour_differences(rows):
 
 def sort_rows_by_corrected_time(rows):
     hour_differences = _hour_differences(rows)
-
+    print(hour_differences)
     for row in rows:
         row["corrected_time"] = row["generated_datetime"] - timedelta(hours=hour_differences[row["client_id"]])
 
-    return sorted(rows, key=lambda x: x["corrected_time"], reverse=True)
+    return sorted(rows, key=lambda x: x["corrected_time"])
 
-def group_rows_between_gaps(rows_most_recent_first):
+def group_rows_between_gaps(rows_most_recent_last):
     """ create a list of grouped sub-trajectories (most recent group first, most recent row first in group)
 
     grouped either into those whose constituent points are 
@@ -75,36 +75,35 @@ def group_rows_between_gaps(rows_most_recent_first):
      - separated by more
     so that those separated by more can be marked with a dashed line to signal interpolation.
     """
+    assert rows_most_recent_last[0]["corrected_time"] <= rows_most_recent_last[1]["corrected_time"]
     def _reducer(memo, row):
         if len(memo) == 0:
             return [[row]]
         if row["timediff"] > MAX_UNMARKED_INTERPOLATION_SECS:
             memo[-1].append(row) # the interpolated group (which is the last row of the previous group, plus the current row)
-            memo.append([row])  # a new group
+            memo.append([row])   # a new group
         else:
             memo[-1].append(row)
         return memo
-    reduced = reduce(_reducer, rows_most_recent_first, [])
-    print([len(x) for x in reduced])
+    reduced = reduce(_reducer, rows_most_recent_last, [])
     if len(reduced[-1]) <= 1:
         reduced = reduced[:-1]
     return reduced
 
 def rows_to_geojson(this_trajectory_rows_grouped):
     features = []
-    for group_of_rows_most_recent_first in this_trajectory_rows_grouped:
-        assert len(group_of_rows_most_recent_first) == 1 or group_of_rows_most_recent_first[0]["datetz"] >= group_of_rows_most_recent_first[1]["datetz"]
-        grouped_rows = list(reversed([row for row in group_of_rows_most_recent_first]))
+    for group_of_rows_most_recent_last in this_trajectory_rows_grouped:
+        assert len(group_of_rows_most_recent_last) == 1 or group_of_rows_most_recent_last[0]["corrected_time"] <= group_of_rows_most_recent_last[1]["corrected_time"]
         features.append({
             "type": "Feature",
             "properties": {
-              "interpolated": len(grouped_rows) == 2 and group_of_rows_most_recent_first[1]["timediff"] > MAX_UNMARKED_INTERPOLATION_SECS,
-              "traj_start": grouped_rows[0]["datetz"].isoformat(),
-              "traj_end": grouped_rows[-1]["datetz"].isoformat()
+              "interpolated": len(group_of_rows_most_recent_last) == 2 and group_of_rows_most_recent_last[1]["timediff"] > MAX_UNMARKED_INTERPOLATION_SECS,
+              "traj_start": group_of_rows_most_recent_last[0]["corrected_time"].isoformat(),
+              "traj_end": group_of_rows_most_recent_last[-1]["corrected_time"].isoformat()
             },
             "geometry": {
               "type": "LineString",
-              "coordinates":  list([(row["lon"], row["lat"]) for row in grouped_rows])
+              "coordinates":  list([(row["lon"], row["lat"]) for row in group_of_rows_most_recent_last])
             }
         })
     linestring = {
