@@ -79,11 +79,14 @@ def group_rows_between_gaps(rows_most_recent_last):
     def _reducer(memo, row):
         if len(memo) == 0:
             return [[row]]
-        if row["timediff"] > MAX_UNMARKED_INTERPOLATION_SECS:
-            memo[-1].append(row) # the interpolated group (which is the last row of the previous group, plus the current row)
-            memo.append([row])   # a new group
-        else:
+        elif len(memo) == 1 and len(memo[0]) == 1:
             memo[-1].append(row)
+            return memo
+        if (row["timediff"] > MAX_UNMARKED_INTERPOLATION_SECS) == (memo[-1][-1]["timediff"] > MAX_UNMARKED_INTERPOLATION_SECS):
+            memo[-1].append(row)
+        else:
+            memo.append([memo[-1][-1], row]) # the interpolated group (which is the last row of the previous group, plus the current row)
+            # memo.append([row])   # a new group
         return memo
     reduced = reduce(_reducer, rows_most_recent_last, [])
     if len(reduced[-1]) <= 1:
@@ -97,7 +100,7 @@ def rows_to_geojson(this_trajectory_rows_grouped):
         features.append({
             "type": "Feature",
             "properties": {
-              "interpolated": len(group_of_rows_most_recent_last) == 2 and group_of_rows_most_recent_last[1]["timediff"] > MAX_UNMARKED_INTERPOLATION_SECS,
+              "interpolated": group_of_rows_most_recent_last[-1]["timediff"] >= MAX_UNMARKED_INTERPOLATION_SECS,
               "traj_start": group_of_rows_most_recent_last[0]["corrected_time"].isoformat(),
               "traj_end": group_of_rows_most_recent_last[-1]["corrected_time"].isoformat()
             },

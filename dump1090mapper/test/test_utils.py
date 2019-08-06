@@ -6,7 +6,6 @@ class TestUtilsMethods(unittest.TestCase):
 
 # split_rows_at_timediff
 # rows_to_geojson
-
 # point_at_distance
 # bearing
 
