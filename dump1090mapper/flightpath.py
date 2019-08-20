@@ -100,7 +100,7 @@ class Flightpath():
         mysql_connection = self.mysql_connection
 
     def _default_map_fn(self):
-        return "{}-{start_time_str}-{end_time_str}.png".format(
+        return "{}-{}-{}.png".format(
             self.nnum or self.icao_hex, 
             self.start_time.isoformat().replace(":", "_"), 
             self.end_time.isoformat().replace(":", "_"))
@@ -130,6 +130,7 @@ class Flightpath():
         trajectory_points = flightpath_json["trajectory_points"]
         for point in trajectory_points:
             point["corrected_time"] = datetime.fromisoformat(point["corrected_time"])
+            point["datetz"] = datetime.fromisoformat(point["datetz"])
         fp.trajectory_points = trajectory_points
         if fp.crs != DEFAULT_CRS:
             fp.plane_gdf = fp.plane_gdf.to_crs(epsg=fp.crs)
@@ -138,8 +139,8 @@ class Flightpath():
         return fp
 
     def centerpoint(self):
-        centerpoint = linemerge(MultiLineString(list(plane["geometry"]))).centroid.coords[0]
-        centerpoint_lat_lon = transform(Proj(init=f"EPSG:{crs}") , Proj(init='EPSG:4326'), *centerpoint)
+        centerpoint = linemerge(MultiLineString(list(self.plane_gdf["geometry"]))).centroid.coords[0]
+        centerpoint_lat_lon = transform(Proj(init=f"EPSG:{self.crs}") , Proj(init='EPSG:4326'), *centerpoint)
         return {
                 "x": centerpoint[0], "y": centerpoint[1], 
                 "lat": centerpoint_lat_lon[1], "lon": centerpoint_lat_lon[0]
@@ -172,6 +173,7 @@ class Flightpath():
         for point in self.trajectory_points: # make a copy of trajectory_points with datetz objects that are serializable
             point = dict(point)
             point["corrected_time"] = point["corrected_time"].isoformat()
+            point["datetz"] = point["datetz"].isoformat()
             trajectory_points.append(point)
         return json.dumps({
             "geojson": self.plane_geojson,
@@ -235,7 +237,7 @@ class Flightpath():
         assert trajectory_points[0]["corrected_time"] <= trajectory_points[1]["corrected_time"] and trajectory_points[0]["corrected_time"] <= trajectory_points[-1]["corrected_time"]
 
 
-        self.trajectory_points = [{"corrected_time": row["corrected_time"], "timediff": row.get("timediff", 0), "lat": row["lat"], "lon": row["lon"]} for row in trajectory_points]
+        self.trajectory_points = [{"corrected_time": row["corrected_time"], "datetz": row["datetz"], "timediff": row.get("timediff", 0), "lat": row["lat"], "lon": row["lon"]} for row in trajectory_points]
         trajectory_points_grouped = group_rows_between_gaps(self.trajectory_points)
         for group in trajectory_points_grouped:
             assert(len(group) >= 2)
@@ -247,8 +249,8 @@ class Flightpath():
             plane = plane.to_crs(epsg=self.crs)
         self.plane_gdf = plane
         self.plane_geojson = plane_geojson
-        self.start_time = self.trajectory_points[0]["corrected_time"]
-        self.end_time =   self.trajectory_points[-1]["corrected_time"]
+        self.start_time = self.trajectory_points[0]["datetz"]  # it's datetz here because corrected_time can only be used for SORTING since the timezone is not guaranteed to make sense.
+        self.end_time =   self.trajectory_points[-1]["datetz"] # it's datetz here because corrected_time can only be used for SORTING since the timezone is not guaranteed to make sense.
 
     def as_shingles(self):
         """returns a list of other Flightpaths"""
@@ -373,7 +375,7 @@ class Flightpath():
         if self.plane_gdf["geometry"].shape[0] >= 3:
             for line, props in zip(self.plane_gdf["geometry"][1:-1], self.plane_geojson["features"][1:-1]):
                 line_xy = line.xy
-                plt.plot(*line_xy, color='red', linewidth=2, linestyle=":" if props["properties"]["interpolated"] else "-")
+                plt.plot(*line_xy, color='red', linewidth=1, linestyle=":" if props["properties"]["interpolated"] else "-")
 
         # marker at rotation zero points downwards; 90 points east, 180 points up; -90, 270 points west
         # which is weird, since it's counterclockwise
@@ -391,7 +393,7 @@ class Flightpath():
         # start_marker = mpl.path.Path([[-2.5,4],[0,-4],[2.5,4]],[1,2,2])
         # end_marker = mpl.path.Path([[-2.5,4],[0,-4],[2.5,4]],[1,2,2])
         marker = mpl.path.Path([[-2.5,4],[0,-4],[2.5,4]],[1,2,2])
-        common_properties = {'markeredgecolor': 'red', 'markerfacecolor': 'red', 'markersize': 10, 'color': 'red', 'linewidth': 2 }
+        common_properties = {'markeredgecolor': 'red', 'markerfacecolor': 'red', 'markersize': 10, 'color': 'red', 'linewidth': 1 }
 
         start_marker = marker.transformed(mpl.transforms.Affine2D().rotate_deg(180 + (-1 * start_rotation)))
         plt.plot(*plane_first_line_xy,  
@@ -448,7 +450,7 @@ class Flightpath():
 
         width, height = original.size   # Get dimensions
         xmargin = 80
-        cropped_example = original.crop((xmargin, 0, width - xmargin, height))
+        cropped_example = original.crop((xmargin + 1, 1, width - xmargin + 1, height + 1))
         cropped_example.save(map_fn)
 
 
