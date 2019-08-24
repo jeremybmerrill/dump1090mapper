@@ -353,7 +353,7 @@ class Flightpath():
             runways.plot(ax=ax, edgecolor="#ffffff")
 
         if arbitrary_marker:
-            plt.plot(*arbitrary_marker, 'bo', markersize=8) 
+            plt.plot(*transform(orig_proj, dest_proj, arbitrary_marker[1], arbitrary_marker[0]), 'bo', markersize=8) 
 
 
         ### drawing the plane

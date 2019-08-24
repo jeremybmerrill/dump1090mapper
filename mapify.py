@@ -2,7 +2,7 @@
 
 import argparse 
 from dump1090mapper.flightpath import Flightpath, NeighborhoodsCounter, COPTERS, HelicopterShinglingError
-
+from random import random
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--n-number', 
@@ -29,7 +29,7 @@ if __name__ == "__main__":
     assert icao_hex is not None
 
     flightpath = Flightpath(icao_hex, aircraft_nnum, crs=crs) #  (datetime(2019, 7, 27, 6, 8, 15), datetime(2019, 7, 27, 6, 44, 45)
-    # flightpath = Flightpath.from_json('N917PD-2019-08-11T23_29_49-2019-08-12T00_21_19.flightpath.json')
+    flightpath = Flightpath.from_json('N920PD-2019-08-23T20_20_00-2019-08-23T21_08_44.flightpath.json')
     print(f"start time: {flightpath.start_time}")
     print(f"end time: {flightpath.end_time}")
     try:
@@ -37,9 +37,24 @@ if __name__ == "__main__":
     except HelicopterShinglingError:
         []
 
-    map_fn, plt = flightpath.to_map(background_color='#ADD8E6')
+
+    try:
+        shingles = list(flightpath.as_shingles())
+        for shingle in shingles:
+            shingle.is_hovering = random() > 0.8
+    except HelicopterShinglingError:
+        print("HelicopterShinglingError")
+        shingles = []
+
+    was_hovering = any(shingle.is_hovering for shingle in shingles)
+    currently_hovering = any(shingle.is_hovering for shingle in shingles[-2:])
+    centerpoint_of_last_hovering_shingle = next(shingle for shingle in reversed(shingles) if shingle.is_hovering).centerpoint()
+
+    print(centerpoint_of_last_hovering_shingle)
+
+    map_fn, plt = flightpath.to_map(background_color='#ADD8E6', arbitrary_marker=(centerpoint_of_last_hovering_shingle["lat"],centerpoint_of_last_hovering_shingle["lon"]))
     fp_json = flightpath.to_json()
     with open(flightpath.json_fn(), 'w') as f:
         f.write(fp_json)
 
-    # plt.show(block=True)
+    plt.show(block=True)
